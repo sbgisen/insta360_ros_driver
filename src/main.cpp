@@ -217,8 +217,8 @@ public:
         cam->SyncLocalTimeToCamera(start);
         ins_camera::LiveStreamParam param;
         // param.video_resolution = ins_camera::VideoResolution::RES_2560_1280P30;
-        // param.video_resolution = ins_camera::VideoResolution::RES_1152_1152P30;
-        param.video_resolution = ins_camera::VideoResolution::RES_1920_960P30;
+        param.video_resolution = ins_camera::VideoResolution::RES_1152_1152P30;
+        // param.video_resolution = ins_camera::VideoResolution::RES_1920_960P30;
         param.video_bitrate = 1024 * 1024 * 10;
         param.using_lrv = false;
         do {} while (!cam->StartLiveStreaming(param));
