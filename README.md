@@ -1,6 +1,6 @@
 # insta360_ros_driver
 
-A ROS driver for the Insta360 cameras. This driver is tested on Ubuntu 22.04 with ROS2 Humble. The driver has also been verified on the Insta360 X2 and X3 cameras.
+A ROS driver for the Insta360 cameras. This driver is tested on Ubuntu 24.04 with ROS2 Jazzy. The driver has also been verified on the Insta360 X3 cameras.
 
 For X4 cameras, see this [fix](https://github.com/ai4ce/insta360_ros_driver/issues/13#issuecomment-2727005037)
 
@@ -9,7 +9,7 @@ To use this driver, you need to first have Insta360 SDK. Please apply for the SD
 
 ```
 cd ~/ros2_ws/src
-git clone -b humble https://github.com/ai4ce/insta360_ros_driver
+git clone -b jazzy https://github.com/nobuchi/insta360_ros_driver
 cd ..
 ```
 Then, the Insta360 libraries need to be installed as follows:
@@ -48,7 +48,7 @@ This driver directly publishes the video feed in YUV format, since that is the c
 ### Camera Bringup
 The camera can be brought up with the following launch file
 ```
-ros2 launch insta360_ros_driver bringup.launch
+ros2 launch insta360_ros_driver bringup.launch.py
 ```
 ![bringup](docs/bringup_rqt.png)
 
@@ -82,3 +82,14 @@ The IMU allows for frame stabilization. For instance, you are able to visualize 
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=ai4ce/insta360_ros_driver&type=Date)](https://star-history.com/#ai4ce/insta360_ros_driver&Date)
+
+## Publish yuv
+
+```
+ros2 run insta360_ros_driver yuv_driver
+```
+
+
+#### Published Topics
+- /dual_fisheye/yuv_image
+- /imu/data
