@@ -52,7 +52,21 @@ ament_target_dependencies(${PROJECT_NAME}
 )
 target_link_libraries(${PROJECT_NAME} CameraSDK ${AVCODEC_LIBRARIES} ${AVFORMAT_LIBRARIES} ${AVUTIL_LIBRARIES} ${SWSCALE_LIBRARIES})
 
-install(TARGETS ${PROJECT_NAME}
+add_executable(yuv_driver src/yuv.cpp)
+ament_target_dependencies(yuv_driver 
+  rclcpp
+  camera_info_manager
+  cv_bridge
+  image_transport
+  std_msgs
+  std_srvs
+  OpenCV
+)
+target_link_libraries(yuv_driver CameraSDK ${AVCODEC_LIBRARIES} ${AVFORMAT_LIBRARIES} ${AVUTIL_LIBRARIES} ${SWSCALE_LIBRARIES})
+
+install(TARGETS 
+  ${PROJECT_NAME}
+  yuv_driver
   DESTINATION lib/${PROJECT_NAME}
 )
 
