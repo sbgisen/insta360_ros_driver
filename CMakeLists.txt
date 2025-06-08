@@ -13,6 +13,7 @@ find_package(cv_bridge REQUIRED)
 find_package(image_transport REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(imu_tools REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(PkgConfig REQUIRED)
@@ -64,9 +65,18 @@ ament_target_dependencies(yuv_driver
 )
 target_link_libraries(yuv_driver CameraSDK ${AVCODEC_LIBRARIES} ${AVFORMAT_LIBRARIES} ${AVUTIL_LIBRARIES} ${SWSCALE_LIBRARIES})
 
+add_executable(camera_info_publisher src/camera_info_publisher.cpp)
+ament_target_dependencies(camera_info_publisher
+  rclcpp
+  sensor_msgs
+  std_msgs
+)
+target_link_libraries(camera_info_publisher ${YAMLCPP_LIBRARIES})
+
 install(TARGETS 
   ${PROJECT_NAME}
   yuv_driver
+  camera_info_publisher
   DESTINATION lib/${PROJECT_NAME}
 )
 
