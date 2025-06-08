@@ -83,7 +83,7 @@ The IMU allows for frame stabilization. For instance, you are able to visualize 
 
 [![Star History Chart](https://api.star-history.com/svg?repos=ai4ce/insta360_ros_driver&type=Date)](https://star-history.com/#ai4ce/insta360_ros_driver&Date)
 
-## Publish yuv
+## Publish YUV
 
 ```
 ros2 run insta360_ros_driver yuv_driver
@@ -92,4 +92,4 @@ ros2 run insta360_ros_driver yuv_driver
 
 #### Published Topics
 - /dual_fisheye/yuv_image
-- /imu/data
+- /imu/data_raw
