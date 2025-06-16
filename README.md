@@ -86,7 +86,7 @@ The IMU allows for frame stabilization. For instance, you are able to visualize 
 ## Publish YUV
 
 ```
-ros2 run insta360_ros_driver yuv_driver
+ros2 launch insta360_ros_driver bringup_yuv.launch.py 
 ```
 
 
