@@ -1,49 +1,48 @@
 /**:
   ros__parameters:
     # === 動作モード設定 ===
-    use_image_trigger: false    # true: 画像トリガーモード, false: タイマーモード
-    image_topic: "/camera_image"  # 画像トリガーモード時のサブスクライブトピック
-    image_type: "raw"           # "raw" or "compressed" (画像の種類)
-    
+    use_image_trigger: false # true: 画像トリガーモード, false: タイマーモード
+    image_topic: "/camera_image" # 画像トリガーモード時のサブスクライブトピック
+    image_type: "raw" # "raw" or "compressed" (画像の種類)
+
     # === 基本設定 ===
     # フレームID（注意：画像トリガーモードでは画像のframe_idが優先される）
-    frame_id: "rear_camera_frame"     # タイマーモード時のみ使用
-    publish_rate: 1.0           # タイマーモード時の配信頻度 [Hz]
+    frame_id: "rear_camera_frame" # タイマーモード時のみ使用
+    publish_rate: 1.0 # タイマーモード時の配信頻度 [Hz]
 
     # === カメラ情報 ===
-    # 画像サイズ（注意：画像トリガーモードでは実際の画像サイズが優先される）
-    image_width: 1152           # タイマーモード時のみ使用
-    image_height: 1152          # タイマーモード時のみ使用
-    camera_name: "narrow_stereo"
-    
-    # === カメラキャリブレーション情報 ===
-    # カメラ行列（3x3）
+    image_width: 1152
+    image_height: 1152
+    camera_name: narrow_stereo
     camera_matrix:
       rows: 3
       cols: 3
-      data: [339.65302,   0.     , 596.87339,
-              0.     , 343.9755 , 581.36224,
-              0.     ,   0.     ,   1.     ]
-    
-    # 歪み補正パラメータ
-    distortion_model: "plumb_bob"
+      data:
+        [307.77202, -0.09099, 569.54805, 0., 307.2597, 585.53978, 0., 0., 1.]
+    distortion_model: equidistant
     distortion_coefficients:
       rows: 1
-      cols: 5
-      data: [-0.162207, 0.015493, -0.001385, -0.002405, 0.000000]
-    
-    # 補正行列（3x3）
+      cols: 4
+      data: [0.056735, -0.009356, 0.002468, -0.001583]
     rectification_matrix:
       rows: 3
       cols: 3
-      data: [1., 0., 0.,
-            0., 1., 0.,
-            0., 0., 1.]
-    
-    # 投影行列（3x4）
+      data: [1., 0., 0., 0., 1., 0., 0., 0., 1.]
     projection_matrix:
       rows: 3
       cols: 4
-      data: [594.27698,   0.     , 601.80472,   0.     ,
-              0.     , 606.5672 , 587.03951,   0.     ,
-              0.     ,   0.     ,   1.     ,   0.     ]
+      data:
+        [
+          307.77202,
+          -0.09099,
+          569.54805,
+          0.,
+          0.,
+          307.2597,
+          585.53978,
+          0.,
+          0.,
+          0.,
+          1.,
+          0.,
+        ]
