@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 import os
 
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.conditions import IfCondition, UnlessCondition
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.conditions import IfCondition
+from launch.substitutions import LaunchConfiguration
+from launch.substitutions import PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
-from ament_index_python.packages import get_package_share_directory
+
 
 def generate_launch_description():
     pkg_dir = get_package_share_directory('insta360_ros_driver')
@@ -15,22 +17,16 @@ def generate_launch_description():
     intrinsics = os.path.join(pkg_dir, 'config', 'intrinsics.yaml')
 
     # Declare launch arguments
-    undistort_arg = DeclareLaunchArgument(
-        'undistort',
-        default_value='false',
-        description='Enable undistortion'
-    )
+    undistort_arg = DeclareLaunchArgument('undistort', default_value='false', description='Enable undistortion')
 
     equirectangular_arg = DeclareLaunchArgument(
         'equirectangular',
-        default_value='true',
-        description='Enable equirectangular projection'
+        default_value='false',
+        description='Enable equirectangular projection (disable for offline processing)',
     )
 
     config_arg = DeclareLaunchArgument(
-        'config',
-        default_value='config.yaml',
-        description='Path to the configuration file'
+        'config', default_value='config.yaml', description='Path to the configuration file'
     )
 
     # Define the bringup node with parameters
@@ -39,13 +35,9 @@ def generate_launch_description():
         executable='insta360_ros_driver',
         name='insta360_bringup',
         parameters=[
-            PathJoinSubstitution([
-                FindPackageShare('insta360_ros_driver'),
-                'config',
-                LaunchConfiguration('config')
-            ])
+            PathJoinSubstitution([FindPackageShare('insta360_ros_driver'), 'config', LaunchConfiguration('config')])
         ],
-        output='screen'
+        output='screen',
     )
 
     imu_node = Node(
@@ -53,13 +45,7 @@ def generate_launch_description():
         executable='imu_filter_madgwick_node',
         name='imu_filter',
         output='screen',
-        parameters=[
-            PathJoinSubstitution([
-                FindPackageShare('insta360_ros_driver'),
-                'config',
-                'imu_filter.yaml'
-            ])
-        ]
+        parameters=[PathJoinSubstitution([FindPackageShare('insta360_ros_driver'), 'config', 'imu_filter.yaml'])],
     )
 
     equirectangular_node = Node(
@@ -68,9 +54,7 @@ def generate_launch_description():
         name='equirectangular_node',
         output='screen',
         condition=IfCondition(LaunchConfiguration('equirectangular')),
-        arguments=[
-            '--gpu',
-            '--calibration_file', extrinsics]
+        arguments=['--gpu', '--calibration_file', extrinsics],
     )
 
     undistort_node = Node(
@@ -79,9 +63,8 @@ def generate_launch_description():
         name='undistort_node',
         output='screen',
         condition=IfCondition(LaunchConfiguration('undistort')),
-        parameters=[intrinsics]
+        parameters=[intrinsics],
     )
-
 
     ld = LaunchDescription()
 

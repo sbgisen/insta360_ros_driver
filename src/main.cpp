@@ -15,6 +15,7 @@
 #include "cv_bridge/cv_bridge.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/image_encodings.hpp"
+#include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "sensor_msgs/msg/imu.hpp"
 #include "stream/stream_delegate.h"
@@ -40,6 +41,7 @@ private:
 
   std::shared_ptr<rclcpp::Node> node_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr dual_fisheye_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr dual_fisheye_compressed_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
 
   double fx, fy, cx, cy;
@@ -49,6 +51,8 @@ public:
   TestStreamDelegate(const std::shared_ptr<rclcpp::Node> & node) : node_(node)
   {
     dual_fisheye_pub_ = node_->create_publisher<sensor_msgs::msg::Image>("/dual_fisheye/image", rclcpp::QoS(0));
+    dual_fisheye_compressed_pub_ =
+      node_->create_publisher<sensor_msgs::msg::CompressedImage>("/dual_fisheye/image/compressed", rclcpp::QoS(0));
     imu_pub_ = node_->create_publisher<sensor_msgs::msg::Imu>("imu/data_raw", rclcpp::QoS(0));
 
     file1_ = fopen("./01.h264", "wb");
@@ -148,14 +152,24 @@ public:
         cv::Mat frontImage = rgb(cv::Rect(midPoint, 0, midPoint, height));
         cv::Mat backImage = rgb(cv::Rect(0, 0, midPoint, height));
 
-        frontImage = rotateImage(frontImage, 90);
-        backImage = rotateImage(backImage, -90);
+        // frontImage = rotateImage(frontImage, 90);
+        // backImage = rotateImage(backImage, -90);
 
         cv::Mat dualFisheyeImage;
         cv::hconcat(frontImage, backImage, dualFisheyeImage);
 
         auto dualFisheyeMsg = matToImgMsg(dualFisheyeImage, "dual_fisheye_frame");
         dual_fisheye_pub_->publish(*dualFisheyeMsg);
+
+        // Publish compressed image
+        auto compressed_msg = std::make_shared<sensor_msgs::msg::CompressedImage>();
+        compressed_msg->header = dualFisheyeMsg->header;
+        compressed_msg->format = "jpeg";
+        std::vector<int> params = {cv::IMWRITE_JPEG_QUALITY, 95};
+        cv::Mat bgr;
+        cv::cvtColor(dualFisheyeImage, bgr, cv::COLOR_RGB2BGR);
+        cv::imencode(".jpg", bgr, compressed_msg->data, params);
+        dual_fisheye_compressed_pub_->publish(*compressed_msg);
       }
     }
   }
@@ -224,10 +238,8 @@ public:
     auto start = time(NULL);
     cam->SyncLocalTimeToCamera(start);
     ins_camera::LiveStreamParam param;
-    // param.video_resolution = ins_camera::VideoResolution::RES_2560_1280P30;
-    param.video_resolution = ins_camera::VideoResolution::RES_1152_1152P30;
-    // param.video_resolution = ins_camera::VideoResolution::RES_1920_960P30;
-    param.video_bitrate = 1024 * 1024 * 10;
+    param.video_resolution = ins_camera::VideoResolution::RES_3840_1920P20;
+    param.video_bitrate = 1024 * 1024 * 20;
     param.using_lrv = false;
     do {
     } while (!cam->StartLiveStreaming(param));
