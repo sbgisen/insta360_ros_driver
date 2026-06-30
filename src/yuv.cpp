@@ -231,8 +231,9 @@ public:
     discovery.FreeDeviceDescriptors(list);
     std::cout << "Successfully opened camera..." << std::endl;
     auto camera_type = cam->GetCameraLensType();
-    auto start = time(NULL);
-    cam->SyncLocalTimeToCamera(start);
+    uint64_t utc_time = static_cast<uint64_t>(time(NULL));
+    uint32_t offset_time = 0;  // no offset from UTC
+    cam->SyncLocalTimeToCamera(utc_time, offset_time);
     ins_camera::LiveStreamParam param;
     param.video_resolution = ins_camera::VideoResolution::RES_3840_1920P20;
     param.video_bitrate = 1024 * 1024 * 20;
