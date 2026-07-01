@@ -96,13 +96,23 @@ private:
 public:
     CameraWrapper(const std::shared_ptr<rclcpp::Node>& node) : node_(node) {}
 
-    ~CameraWrapper() {
+    ~CameraWrapper() { stop(); }
+
+    // Stops the live stream and closes the camera. Safe to call multiple
+    // times (e.g. once from rclcpp::on_shutdown() and once from the
+    // destructor) since cam is reset to nullptr after the first call.
+    //
+    // Called explicitly via rclcpp::on_shutdown() rather than relying only
+    // on this destructor, because on a SIGINT/SIGTERM the process has been
+    // observed to terminate via the raw signal (exit code -2, not a normal
+    // return from main()) instead of unwinding the stack, which would skip
+    // this destructor entirely and leave the camera mid-stream ("timeout to
+    // wait for synchronize" on the next start).
+    void stop() {
         if (cam) {
-            // Stop the live stream before closing, otherwise the camera is left
-            // in a streaming state and the next session hangs on
-            // "timeout to wait for synchronize".
             cam->StopLiveStreaming();
             cam->Close();
+            cam.reset();
         }
     }
 
@@ -180,6 +190,12 @@ int main(int argc, char* argv[]) {
         rclcpp::shutdown();
         return -1;
     }
+
+    // Ensures the camera is stopped as part of rclcpp's own shutdown
+    // sequence, rather than depending solely on `camera`'s destructor
+    // running during a normal return from main() (see CameraWrapper::stop()
+    // for why that isn't reliable on SIGINT/SIGTERM).
+    rclcpp::on_shutdown([&camera]() { camera.stop(); });
 
     rclcpp::spin(node);
     rclcpp::shutdown();
