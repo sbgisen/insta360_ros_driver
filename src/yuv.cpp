@@ -209,7 +209,9 @@ public:
         std::cout << "Successfully opened camera..." << std::endl;
         auto camera_type = cam->GetCameraLensType();
         auto start = time(NULL);
-        cam->SyncLocalTimeToCamera(start);
+        uint64_t utc_time = static_cast<uint64_t>(start);
+        uint32_t offset_time = 0; //no offset from UTC
+        cam->SyncLocalTimeToCamera(utc_time, offset_time);
         ins_camera::LiveStreamParam param;
         // param.video_resolution = ins_camera::VideoResolution::RES_2560_1280P30;
         param.video_resolution = ins_camera::VideoResolution::RES_1152_1152P30;
