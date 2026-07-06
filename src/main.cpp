@@ -219,6 +219,16 @@ public:
       if (was_streaming) {
         local_cam->StopLiveStreaming();
       }
+      // ShutdownCamera() explicitly tells the camera to power itself
+      // off, which is what puts it into the BLE-wake-listening standby
+      // state the same way the power button / official app does.
+      // Close() alone only tears down our local connection object and
+      // does not appear to trigger this -- leaving the camera
+      // connected-but-abandoned from its own point of view, which
+      // matches the observed symptom (a camera left in that state
+      // answers neither BLE wake-up nor the official app until it is
+      // forcibly power-cycled).
+      local_cam->ShutdownCamera();
       local_cam->Close();
       done->store(true);
     }).detach();
@@ -230,8 +240,8 @@ public:
     if (!done->load()) {
       RCLCPP_ERROR(
         node_->get_logger(),
-        "Camera did not finish StopLiveStreaming()/Close() within the timeout; giving up so the "
-        "process can still exit before ros2 launch escalates to SIGKILL.");
+        "Camera did not finish StopLiveStreaming()/ShutdownCamera()/Close() within the timeout; "
+        "giving up so the process can still exit before ros2 launch escalates to SIGKILL.");
     }
   }
 
