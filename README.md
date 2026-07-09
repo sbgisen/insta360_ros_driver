@@ -93,3 +93,7 @@ ros2 launch insta360_ros_driver bringup_yuv.launch.py
 #### Published Topics
 - /dual_fisheye/yuv_image
 - /imu/data_raw
+
+## Developer: Latency Measurement
+
+For camera timing/jitter measurement results and the `enable_latency_debug_log` debug logging mode, see [docs/latency_measurement.md](docs/latency_measurement.md).
