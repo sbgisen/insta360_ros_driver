@@ -5,6 +5,7 @@
 #include <atomic>
 #include <chrono>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <string>
 #include <thread>
@@ -88,9 +89,14 @@ public:
 
       if (enable_latency_debug_log_ && latency_log_.is_open()) {
         const int64_t seq = frame_seq_.fetch_add(1);
-        const double media_time = cam_ ? static_cast<double>(cam_->GetCameraMediaTime()) : -1.0;
-        latency_log_ << seq << ',' << timestamp << ',' << last_exposure_timestamp_.load() << ',' << media_time << ','
-                     << now_stamp.seconds() << '\n';
+        // NOTE: GetCameraMediaTime() を live stream 中（OnVideoData コールバック内）から
+        // 呼んではならない。実機検証 (LIDAR-079) で、1回でも呼ぶとカメラの内部コマンド
+        // チャンネルがブロックされ video stream が完全停止することが100%再現で確認された。
+        // media_time 列は既存 CSV パーサとの互換性のため残すが、値は常に -1.0 固定とする。
+        // 詳細: queue/projects/lidar-colorization/reports/lidar079_camera_latency_results.md
+        const double media_time = -1.0;
+        latency_log_ << seq << ',' << timestamp << ',' << std::fixed << std::setprecision(6)
+                     << last_exposure_timestamp_.load() << ',' << media_time << ',' << now_stamp.seconds() << '\n';
         latency_log_.flush();
       }
     }
