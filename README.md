@@ -75,6 +75,41 @@ Whether to publish front and back rectilinear images
 
 ![rectilinear](docs/rectilinear.png)
 
+- exposure_mode (default="auto")
+
+Camera exposure mode. `auto` leaves the camera on its own automatic exposure (no SDK exposure call is
+made, matching prior behavior). `manual` applies the `iso` and `shutter_speed` parameters via the SDK's
+manual exposure settings.
+
+- iso (default="400")
+
+ISO value applied when `exposure_mode:=manual`. Must be a positive integer, or it is rejected
+(logged as an error) and exposure falls back to auto. The SDK documents example ISO values such as
+100, 400, 800, 1600, etc. as a guide, not as a strict allowlist.
+
+- shutter_speed (default="0.008")
+
+Shutter speed in seconds (e.g. 0.008 = 1/125s) applied when `exposure_mode:=manual`. Must be a finite
+positive value, or it is rejected (logged as an error) and exposure falls back to auto. Example shutter
+values from the SDK: 1/30, 1/60, 1/120, etc. (guide only, not a strict allowlist).
+
+- video_resolution (default="3840x1920@20")
+
+Live stream resolution. One of: `1920x960@30`, `2560x1280@30`, `3840x1920@20`, `3840x1920@30`,
+`5312x2988@30`. An unrecognized value falls back to the default and logs a warning.
+
+Note: `5312x2988@30` (5K) is untested on real X3 hardware. The SDK exposes this resolution enum, but
+if `StartLiveStreaming` keeps failing after selecting it, the camera model may not actually support
+live streaming at this resolution.
+
+- stream_retry_limit (default="0")
+
+Maximum number of `StartLiveStreaming` retry attempts before giving up and exiting the node. `0`
+(default) means unlimited retries while the node is alive, matching the original recovery behavior
+(this is relied on for production auto-recovery, since the node itself has no external respawn/restart
+mechanism watching it individually). Only set a finite value when explicitly testing an
+unsupported/untested `video_resolution` and you want the node to fail fast instead of retrying forever.
+
 The IMU allows for frame stabilization. For instance, you are able to visualize the orientation of the camera.
 
 ![IMU](https://github.com/user-attachments/assets/02b50cad-8415-4dde-9014-9ab3a4d415b9)

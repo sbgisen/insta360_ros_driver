@@ -25,8 +25,38 @@ def generate_launch_description():
         description='Enable equirectangular projection (disable for offline processing)',
     )
 
-    config_arg = DeclareLaunchArgument(
-        'config', default_value='config.yaml', description='Path to the configuration file'
+    config_arg = DeclareLaunchArgument('config',
+                                       default_value='config.yaml',
+                                       description='Path to the configuration file')
+
+    exposure_mode_arg = DeclareLaunchArgument(
+        'exposure_mode',
+        default_value='auto',
+        description='Camera exposure mode: "auto" (SDK default) or "manual" (applies iso/shutter_speed)',
+    )
+
+    iso_arg = DeclareLaunchArgument('iso',
+                                    default_value='400',
+                                    description='ISO value used when exposure_mode is "manual"')
+
+    shutter_speed_arg = DeclareLaunchArgument(
+        'shutter_speed',
+        default_value='0.008',
+        description='Shutter speed in seconds used when exposure_mode is "manual" (default 1/125s)',
+    )
+
+    video_resolution_arg = DeclareLaunchArgument(
+        'video_resolution',
+        default_value='3840x1920@20',
+        description='Live stream resolution, one of: 1920x960@30, 2560x1280@30, 3840x1920@20, '
+        '3840x1920@30, 5312x2988@30 (5K, untested on real hardware)',
+    )
+
+    stream_retry_limit_arg = DeclareLaunchArgument(
+        'stream_retry_limit',
+        default_value='0',
+        description='Max StartLiveStreaming retry attempts before giving up (0 = unlimited, default). '
+        'Only set a finite value when explicitly testing an unsupported/untested video_resolution.',
     )
 
     # Define the bringup node with parameters
@@ -35,7 +65,15 @@ def generate_launch_description():
         executable='insta360_ros_driver',
         name='insta360_bringup',
         parameters=[
-            PathJoinSubstitution([FindPackageShare('insta360_ros_driver'), 'config', LaunchConfiguration('config')])
+            PathJoinSubstitution([FindPackageShare('insta360_ros_driver'), 'config',
+                                  LaunchConfiguration('config')]),
+            {
+                'exposure_mode': LaunchConfiguration('exposure_mode'),
+                'iso': LaunchConfiguration('iso'),
+                'shutter_speed': LaunchConfiguration('shutter_speed'),
+                'video_resolution': LaunchConfiguration('video_resolution'),
+                'stream_retry_limit': LaunchConfiguration('stream_retry_limit'),
+            },
         ],
         output='screen',
     )
@@ -71,6 +109,11 @@ def generate_launch_description():
     ld.add_action(undistort_arg)
     ld.add_action(config_arg)
     ld.add_action(equirectangular_arg)
+    ld.add_action(exposure_mode_arg)
+    ld.add_action(iso_arg)
+    ld.add_action(shutter_speed_arg)
+    ld.add_action(video_resolution_arg)
+    ld.add_action(stream_retry_limit_arg)
     ld.add_action(bringup_node)
     ld.add_action(imu_node)
     ld.add_action(equirectangular_node)
