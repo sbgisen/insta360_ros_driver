@@ -160,12 +160,6 @@ ins_camera::VideoResolution ResolveVideoResolution(const std::string & value, co
     return ins_camera::VideoResolution::RES_3840_1920P20;
   } else if (value == "3840x1920@30") {
     return ins_camera::VideoResolution::RES_3840_1920P30;
-  } else if (value == "5312x2988@30") {
-    // 5K: the SDK exposes this enum value, but live streaming at this
-    // resolution has not been verified on real X3 hardware. If
-    // StartLiveStreaming keeps failing, this resolution may not be
-    // supported by the connected camera model.
-    return ins_camera::VideoResolution::RES_5312_2988P30;
   }
   RCLCPP_WARN(logger, "Unknown video_resolution '%s'. Falling back to default 3840x1920@20.", value.c_str());
   return ins_camera::VideoResolution::RES_3840_1920P20;

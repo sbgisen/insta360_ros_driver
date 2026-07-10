@@ -49,7 +49,7 @@ def generate_launch_description():
         'video_resolution',
         default_value='3840x1920@20',
         description='Live stream resolution, one of: 1920x960@30, 2560x1280@30, 3840x1920@20, '
-        '3840x1920@30, 5312x2988@30 (5K, untested on real hardware)',
+        '3840x1920@30 (4K is the effective ceiling on real X3 hardware)',
     )
 
     stream_retry_limit_arg = DeclareLaunchArgument(

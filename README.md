@@ -95,12 +95,15 @@ values from the SDK: 1/30, 1/60, 1/120, etc. (guide only, not a strict allowlist
 
 - video_resolution (default="3840x1920@20")
 
-Live stream resolution. One of: `1920x960@30`, `2560x1280@30`, `3840x1920@20`, `3840x1920@30`,
-`5312x2988@30`. An unrecognized value falls back to the default and logs a warning.
+Live stream resolution. One of: `1920x960@30`, `2560x1280@30`, `3840x1920@20`, `3840x1920@30`.
+An unrecognized value falls back to the default and logs a warning.
 
-Note: `5312x2988@30` (5K) is untested on real X3 hardware. The SDK exposes this resolution enum, but
-if `StartLiveStreaming` keeps failing after selecting it, the camera model may not actually support
-live streaming at this resolution.
+Note: 4K (`3840x1920`) is the effective live stream ceiling on real X3 hardware. The SDK also
+exposes a `5312x2988@30` (5K) resolution enum, but X3 hardware testing (2026-07) confirmed that
+requesting it does not fail -- `StartLiveStreaming` reports success -- while the actual stream
+silently falls back to 4K (`3840x1920`), as verified via `ffprobe`. Since this fails silently
+instead of erroring, it risked users believing they were capturing at 5K when they were not, so
+the `5312x2988@30` option has been removed.
 
 - stream_retry_limit (default="0")
 
