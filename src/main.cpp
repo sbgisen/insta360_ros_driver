@@ -177,6 +177,22 @@ class CameraWrapper
 private:
   std::shared_ptr<ins_camera::Camera> cam;
   std::shared_ptr<rclcpp::Node> node_;
+  std::atomic<bool> streaming_{false};
+
+  // StopLiveStreaming()/Close() perform a request/response handshake with
+  // the camera over USB. journalctl evidence from a live reboot (2026-07-06
+  // 12:15:31-41) shows this handshake can stall for 15+ seconds when the
+  // camera doesn't answer promptly: ros2 launch's default shutdown
+  // escalation (SIGTERM 5s after SIGINT, SIGKILL 10s after that) fired
+  // and killed the process with pid still inside this call, exit code -9.
+  // A SIGKILL skips every destructor, so the camera never receives the
+  // stop/close handshake at all -- which lines up with the camera later
+  // ignoring BLE wake-up (and even the official app) until it's forcibly
+  // power-cycled. Bounding the wait here means the worst case is "we gave
+  // up and exited anyway", which cannot be worse for the camera's state
+  // than a SIGKILL, while letting the process reliably exit inside the
+  // escalation window instead of gambling on it.
+  static constexpr auto kStopTimeout = std::chrono::seconds(4);
 
 public:
   CameraWrapper(const std::shared_ptr<rclcpp::Node> & node) : node_(node) {}
@@ -186,19 +202,46 @@ public:
   // Stops the live stream and closes the camera. Safe to call multiple
   // times (e.g. once from rclcpp::on_shutdown() and once from the
   // destructor) since cam is reset to nullptr after the first call.
-  //
-  // Called explicitly via rclcpp::on_shutdown() rather than relying only
-  // on this destructor, because on a SIGINT/SIGTERM the process has been
-  // observed to terminate via the raw signal (exit code -2, not a normal
-  // return from main()) instead of unwinding the stack, which would skip
-  // this destructor entirely and leave the camera mid-stream ("timeout to
-  // wait for synchronize" on the next start).
   void stop()
   {
-    if (cam) {
-      cam->StopLiveStreaming();
-      cam->Close();
-      cam.reset();
+    if (!cam) {
+      return;
+    }
+    auto local_cam = std::move(cam);
+    const bool was_streaming = streaming_.exchange(false);
+
+    // Run the actual SDK calls on a detached thread with a bounded wait
+    // (rather than std::async, whose future would block on destruction
+    // until the task finishes, defeating the timeout) so a stuck camera
+    // can no longer take the whole process down with it via SIGKILL.
+    auto done = std::make_shared<std::atomic<bool>>(false);
+    std::thread([local_cam, was_streaming, done]() {
+      if (was_streaming) {
+        local_cam->StopLiveStreaming();
+      }
+      // ShutdownCamera() explicitly tells the camera to power itself
+      // off, which is what puts it into the BLE-wake-listening standby
+      // state the same way the power button / official app does.
+      // Close() alone only tears down our local connection object and
+      // does not appear to trigger this -- leaving the camera
+      // connected-but-abandoned from its own point of view, which
+      // matches the observed symptom (a camera left in that state
+      // answers neither BLE wake-up nor the official app until it is
+      // forcibly power-cycled).
+      local_cam->ShutdownCamera();
+      local_cam->Close();
+      done->store(true);
+    }).detach();
+
+    const auto deadline = std::chrono::steady_clock::now() + kStopTimeout;
+    while (!done->load() && std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    if (!done->load()) {
+      RCLCPP_ERROR(
+        node_->get_logger(),
+        "Camera did not finish StopLiveStreaming()/ShutdownCamera()/Close() within the timeout; "
+        "giving up so the process can still exit before ros2 launch escalates to SIGKILL.");
     }
   }
 
@@ -327,6 +370,7 @@ public:
       return -1;
     }
 
+    streaming_ = true;
     RCLCPP_INFO(node_->get_logger(), "Live streaming started.");
     return 0;
   }
