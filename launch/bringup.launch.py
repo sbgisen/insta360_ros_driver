@@ -52,6 +52,13 @@ def generate_launch_description():
         '3840x1920@30, 5312x2988@30 (5K, untested on real hardware)',
     )
 
+    stream_retry_limit_arg = DeclareLaunchArgument(
+        'stream_retry_limit',
+        default_value='0',
+        description='Max StartLiveStreaming retry attempts before giving up (0 = unlimited, default). '
+        'Only set a finite value when explicitly testing an unsupported/untested video_resolution.',
+    )
+
     # Define the bringup node with parameters
     bringup_node = Node(
         package='insta360_ros_driver',
@@ -65,6 +72,7 @@ def generate_launch_description():
                 'iso': LaunchConfiguration('iso'),
                 'shutter_speed': LaunchConfiguration('shutter_speed'),
                 'video_resolution': LaunchConfiguration('video_resolution'),
+                'stream_retry_limit': LaunchConfiguration('stream_retry_limit'),
             },
         ],
         output='screen',
@@ -105,6 +113,7 @@ def generate_launch_description():
     ld.add_action(iso_arg)
     ld.add_action(shutter_speed_arg)
     ld.add_action(video_resolution_arg)
+    ld.add_action(stream_retry_limit_arg)
     ld.add_action(bringup_node)
     ld.add_action(imu_node)
     ld.add_action(equirectangular_node)

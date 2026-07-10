@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -211,6 +212,10 @@ public:
     const double shutter_speed_param = node_->declare_parameter<double>("shutter_speed", 0.008);
     const std::string video_resolution_param =
       node_->declare_parameter<std::string>("video_resolution", "3840x1920@20");
+    // 0 = unlimited (default; matches the original behavior of retrying
+    // forever while rclcpp::ok()). A positive value is opt-in, intended for
+    // explicitly testing an unsupported/untested resolution without hanging.
+    const int stream_retry_limit_param = node_->declare_parameter<int>("stream_retry_limit", 0);
 
     ins_camera::DeviceDiscovery discovery;
 
@@ -261,15 +266,23 @@ public:
     // exposure_mode=auto (default) skips SDK exposure calls entirely,
     // leaving the camera on its own AUTO exposure exactly as before.
     if (exposure_mode_param == "manual") {
-      auto exposure = std::make_shared<ins_camera::ExposureSettings>();
-      exposure->SetExposureMode(ins_camera::PhotographyOptions_ExposureMode::MANUAL);
-      exposure->SetIso(iso_param);
-      exposure->SetShutterSpeed(shutter_speed_param);
-      if (!cam->SetExposureSettings(ins_camera::CameraFunctionMode::FUNCTION_MODE_LIVE_STREAM, exposure)) {
-        RCLCPP_WARN(
+      if (iso_param <= 0 || !std::isfinite(shutter_speed_param) || shutter_speed_param <= 0) {
+        RCLCPP_ERROR(
           node_->get_logger(),
-          "Failed to apply manual exposure settings (iso=%d, shutter=%f). Continuing with camera defaults.", iso_param,
-          shutter_speed_param);
+          "Invalid manual exposure values (iso=%d, shutter=%f); iso must be > 0 and shutter_speed must be finite "
+          "and > 0. Skipping SetExposureSettings and falling back to auto exposure.",
+          iso_param, shutter_speed_param);
+      } else {
+        auto exposure = std::make_shared<ins_camera::ExposureSettings>();
+        exposure->SetExposureMode(ins_camera::PhotographyOptions_ExposureMode::MANUAL);
+        exposure->SetIso(iso_param);
+        exposure->SetShutterSpeed(shutter_speed_param);
+        if (!cam->SetExposureSettings(ins_camera::CameraFunctionMode::FUNCTION_MODE_LIVE_STREAM, exposure)) {
+          RCLCPP_WARN(
+            node_->get_logger(),
+            "Failed to apply manual exposure settings (iso=%d, shutter=%f). Continuing with camera defaults.",
+            iso_param, shutter_speed_param);
+        }
       }
     } else if (exposure_mode_param != "auto") {
       RCLCPP_WARN(
@@ -291,17 +304,20 @@ public:
     param.enable_audio = false;
     param.using_lrv = false;
 
-    // Cap retries so an unsupported/rejected video_resolution doesn't spin
-    // forever instead of surfacing an actionable error.
-    constexpr int kMaxStartLiveStreamingRetries = 10;
+    // stream_retry_limit=0 (default) retries forever while rclcpp::ok(),
+    // matching the original recovery behavior relied on by the systemd
+    // supervision of the launch process. A positive limit is opt-in only,
+    // for explicitly testing an unsupported/rejected video_resolution
+    // without hanging forever.
     int start_live_streaming_attempts = 0;
     while (rclcpp::ok() && !cam->StartLiveStreaming(param)) {
       ++start_live_streaming_attempts;
-      if (start_live_streaming_attempts >= kMaxStartLiveStreamingRetries) {
+      if (stream_retry_limit_param > 0 && start_live_streaming_attempts >= stream_retry_limit_param) {
         RCLCPP_ERROR(
           node_->get_logger(),
-          "StartLiveStreaming failed %d times. Check that video_resolution=%s is supported by this camera model.",
-          start_live_streaming_attempts, video_resolution_param.c_str());
+          "StartLiveStreaming failed %d times (stream_retry_limit=%d). Check that video_resolution=%s is "
+          "supported by this camera model.",
+          start_live_streaming_attempts, stream_retry_limit_param, video_resolution_param.c_str());
         return -1;
       }
       RCLCPP_WARN(node_->get_logger(), "Failed to start live streaming. Retrying...");
