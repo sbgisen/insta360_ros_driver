@@ -75,6 +75,29 @@ Whether to publish front and back rectilinear images
 
 ![rectilinear](docs/rectilinear.png)
 
+- exposure_mode (default="auto")
+
+Camera exposure mode. `auto` leaves the camera on its own automatic exposure (no SDK exposure call is
+made, matching prior behavior). `manual` applies the `iso` and `shutter_speed` parameters via the SDK's
+manual exposure settings.
+
+- iso (default="400")
+
+ISO value applied when `exposure_mode:=manual`.
+
+- shutter_speed (default="0.008")
+
+Shutter speed in seconds (e.g. 0.008 = 1/125s) applied when `exposure_mode:=manual`.
+
+- video_resolution (default="3840x1920@20")
+
+Live stream resolution. One of: `1920x960@30`, `2560x1280@30`, `3840x1920@20`, `3840x1920@30`,
+`5312x2988@30`. An unrecognized value falls back to the default and logs a warning.
+
+Note: `5312x2988@30` (5K) is untested on real X3 hardware. The SDK exposes this resolution enum, but
+if `StartLiveStreaming` keeps failing after selecting it, the camera model may not actually support
+live streaming at this resolution.
+
 The IMU allows for frame stabilization. For instance, you are able to visualize the orientation of the camera.
 
 ![IMU](https://github.com/user-attachments/assets/02b50cad-8415-4dde-9014-9ab3a4d415b9)

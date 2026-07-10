@@ -144,6 +144,33 @@ public:
   }
 };
 
+namespace
+{
+// Resolves the `video_resolution` ROS parameter string to the SDK enum.
+// Falls back to the default (RES_3840_1920P20, matching the previous
+// hardcoded behavior) and logs a WARN when the string is not recognized.
+ins_camera::VideoResolution ResolveVideoResolution(const std::string & value, const rclcpp::Logger & logger)
+{
+  if (value == "1920x960@30") {
+    return ins_camera::VideoResolution::RES_1920_960P30;
+  } else if (value == "2560x1280@30") {
+    return ins_camera::VideoResolution::RES_2560_1280P30;
+  } else if (value == "3840x1920@20") {
+    return ins_camera::VideoResolution::RES_3840_1920P20;
+  } else if (value == "3840x1920@30") {
+    return ins_camera::VideoResolution::RES_3840_1920P30;
+  } else if (value == "5312x2988@30") {
+    // 5K: the SDK exposes this enum value, but live streaming at this
+    // resolution has not been verified on real X3 hardware. If
+    // StartLiveStreaming keeps failing, this resolution may not be
+    // supported by the connected camera model.
+    return ins_camera::VideoResolution::RES_5312_2988P30;
+  }
+  RCLCPP_WARN(logger, "Unknown video_resolution '%s'. Falling back to default 3840x1920@20.", value.c_str());
+  return ins_camera::VideoResolution::RES_3840_1920P20;
+}
+}  // namespace
+
 class CameraWrapper
 {
 private:
@@ -176,6 +203,15 @@ public:
 
   int run_camera()
   {
+    // ROS parameters controlling manual exposure and live-stream
+    // resolution. Defaults ("auto" / 3840x1920@20) reproduce the
+    // previous hardcoded behavior exactly.
+    const std::string exposure_mode_param = node_->declare_parameter<std::string>("exposure_mode", "auto");
+    const int iso_param = node_->declare_parameter<int>("iso", 400);
+    const double shutter_speed_param = node_->declare_parameter<double>("shutter_speed", 0.008);
+    const std::string video_resolution_param =
+      node_->declare_parameter<std::string>("video_resolution", "3840x1920@20");
+
     ins_camera::DeviceDiscovery discovery;
 
     // Wait until a camera is enumerated. This lets the launch be started
@@ -221,9 +257,30 @@ public:
     uint64_t utc_time = static_cast<uint64_t>(time(NULL));
     uint32_t offset_time = 0;  // no offset from UTC
     cam->SyncLocalTimeToCamera(utc_time, offset_time);
+
+    // exposure_mode=auto (default) skips SDK exposure calls entirely,
+    // leaving the camera on its own AUTO exposure exactly as before.
+    if (exposure_mode_param == "manual") {
+      auto exposure = std::make_shared<ins_camera::ExposureSettings>();
+      exposure->SetExposureMode(ins_camera::PhotographyOptions_ExposureMode::MANUAL);
+      exposure->SetIso(iso_param);
+      exposure->SetShutterSpeed(shutter_speed_param);
+      if (!cam->SetExposureSettings(ins_camera::CameraFunctionMode::FUNCTION_MODE_LIVE_STREAM, exposure)) {
+        RCLCPP_WARN(
+          node_->get_logger(),
+          "Failed to apply manual exposure settings (iso=%d, shutter=%f). Continuing with camera defaults.", iso_param,
+          shutter_speed_param);
+      }
+    } else if (exposure_mode_param != "auto") {
+      RCLCPP_WARN(
+        node_->get_logger(), "Unknown exposure_mode '%s'. Falling back to auto (camera default exposure).",
+        exposure_mode_param.c_str());
+    }
+
     ins_camera::LiveStreamParam param;
-    // 4K dual-fisheye at 20fps (max fps for this resolution on the X3)
-    param.video_resolution = ins_camera::VideoResolution::RES_3840_1920P20;
+    // 4K dual-fisheye at 20fps (max fps for this resolution on the X3) by
+    // default; overridable via the `video_resolution` ROS parameter.
+    param.video_resolution = ResolveVideoResolution(video_resolution_param, node_->get_logger());
     //Possible resolutions (results may vary per model) are:
     //RES_3840_1920P30
     //RES_2560_1280P30
@@ -234,7 +291,19 @@ public:
     param.enable_audio = false;
     param.using_lrv = false;
 
+    // Cap retries so an unsupported/rejected video_resolution doesn't spin
+    // forever instead of surfacing an actionable error.
+    constexpr int kMaxStartLiveStreamingRetries = 10;
+    int start_live_streaming_attempts = 0;
     while (rclcpp::ok() && !cam->StartLiveStreaming(param)) {
+      ++start_live_streaming_attempts;
+      if (start_live_streaming_attempts >= kMaxStartLiveStreamingRetries) {
+        RCLCPP_ERROR(
+          node_->get_logger(),
+          "StartLiveStreaming failed %d times. Check that video_resolution=%s is supported by this camera model.",
+          start_live_streaming_attempts, video_resolution_param.c_str());
+        return -1;
+      }
       RCLCPP_WARN(node_->get_logger(), "Failed to start live streaming. Retrying...");
       std::this_thread::sleep_for(std::chrono::seconds(1));
     }
