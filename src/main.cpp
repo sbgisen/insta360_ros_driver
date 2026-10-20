@@ -6,9 +6,12 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
+#include <deque>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -18,6 +21,16 @@
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/imu.hpp"
+#include "stream_compose.hpp"
+
+// Options for combining the two lens streams (stream_index 0 / 1) into one
+// side-by-side H.264 stream.
+struct ComposeOptions
+{
+  bool enable = true;
+  stream_compose::CombinerConfig combiner;
+  double detect_timeout_sec = 3.0;
+};
 
 class TestStreamDelegate : public ins_camera::StreamDelegate
 {
@@ -51,6 +64,118 @@ private:
   StreamStats stats_[kMaxLoggedStreams];
   std::chrono::steady_clock::time_point last_stats_log_ = std::chrono::steady_clock::now();
 
+  // Dual-lens composition. The mode is decided once: dual as soon as the first
+  // stream_index 1 packet arrives, single (plain passthrough of stream 0, as
+  // before) if none shows up within detect_timeout_sec. It never switches back,
+  // so the topic never mixes 2880x2880 and side-by-side frames.
+  enum class Mode
+  {
+    kDetect,
+    kDual,
+    kSingle
+  };
+  struct Job
+  {
+    int stream_index;
+    int64_t timestamp;
+    rclcpp::Time stamp;
+    std::vector<uint8_t> data;
+  };
+  static constexpr size_t kMaxQueuedJobs = 40;
+  ComposeOptions compose_;
+  std::atomic<Mode> mode_{Mode::kDetect};
+  std::chrono::steady_clock::time_point first_packet_time_;
+  bool first_packet_seen_ = false;
+  std::unique_ptr<stream_compose::DualStreamCombiner> combiner_;
+  std::mutex queue_mutex_;
+  std::condition_variable queue_cv_;
+  std::deque<Job> queue_;
+  std::atomic<bool> stop_worker_{false};
+  std::atomic<int64_t> dropped_jobs_{0};
+  std::thread worker_;
+
+  void PublishPacket(const uint8_t * data, size_t size, int64_t timestamp, const rclcpp::Time & stamp)
+  {
+    auto msg = std::make_unique<sensor_msgs::msg::CompressedImage>();
+    msg->header.stamp = stamp;
+    msg->header.frame_id = "camera_frame";
+    // The subscriber will need to know this to select the correct decoder.
+    msg->format = "h264";
+    msg->data.assign(data, data + size);
+    compressed_pub_->publish(std::move(msg));
+
+    if (enable_latency_debug_log_ && latency_log_.is_open()) {
+      const int64_t seq = frame_seq_.fetch_add(1);
+      // NOTE: GetCameraMediaTime() を live stream 中（OnVideoData コールバック内）から
+      // 呼んではならない。実機検証 (LIDAR-079) で、1回でも呼ぶとカメラの内部コマンド
+      // チャンネルがブロックされ video stream が完全停止することが100%再現で確認された。
+      // media_time 列は既存 CSV パーサとの互換性のため残すが、値は常に -1.0 固定とする。
+      // 詳細: queue/projects/lidar-colorization/reports/lidar079_camera_latency_results.md
+      const double media_time = -1.0;
+      latency_log_ << seq << ',' << timestamp << ',' << std::fixed << std::setprecision(6)
+                   << last_exposure_timestamp_.load() << ',' << media_time << ',' << stamp.seconds() << '\n';
+      latency_log_.flush();
+    }
+  }
+
+  // Runs on its own thread: decoding/encoding must never block the SDK
+  // callback (a blocked callback has stalled the stream before).
+  void WorkerLoop()
+  {
+    // header.stamp of a pair is the arrival time of its lens 0 packet, taken in
+    // the SDK callback, so decode/encode latency does not shift it.
+    std::deque<std::pair<int64_t, rclcpp::Time>> stamps;
+    std::vector<uint8_t> out;
+    while (true) {
+      Job job;
+      {
+        std::unique_lock<std::mutex> lock(queue_mutex_);
+        queue_cv_.wait(lock, [this] { return stop_worker_ || !queue_.empty(); });
+        if (stop_worker_) {
+          return;
+        }
+        job = std::move(queue_.front());
+        queue_.pop_front();
+      }
+      if (mode_ == Mode::kSingle) {
+        continue;
+      }
+      if (job.stream_index == 0) {
+        stamps.emplace_back(job.timestamp, job.stamp);
+        if (stamps.size() > 32) {
+          stamps.pop_front();
+        }
+      }
+      int64_t out_ts = 0;
+      if (!combiner_->PushPacket(job.stream_index, job.data.data(), job.data.size(), job.timestamp, &out, &out_ts)) {
+        continue;
+      }
+      rclcpp::Time stamp = node_->get_clock()->now();
+      for (const auto & kv : stamps) {
+        if (kv.first == out_ts) {
+          stamp = kv.second;
+        }
+      }
+      PublishPacket(out.data(), out.size(), out_ts, stamp);
+    }
+  }
+
+  void EnqueueJob(const uint8_t * data, size_t size, int64_t timestamp, int stream_index, const rclcpp::Time & stamp)
+  {
+    {
+      std::lock_guard<std::mutex> lock(queue_mutex_);
+      if (queue_.size() >= kMaxQueuedJobs) {
+        queue_.pop_front();
+        const int64_t n = ++dropped_jobs_;
+        if (n == 1 || n % 100 == 0) {
+          RCLCPP_WARN(node_->get_logger(), "Composer queue full; dropped %ld packets so far.", static_cast<long>(n));
+        }
+      }
+      queue_.push_back(Job{stream_index, timestamp, stamp, std::vector<uint8_t>(data, data + size)});
+    }
+    queue_cv_.notify_one();
+  }
+
   void RecordStreamStats(size_t size, int64_t timestamp, int stream_index)
   {
     if (stream_index < 0 || stream_index >= kMaxLoggedStreams) {
@@ -82,8 +207,9 @@ private:
 public:
   TestStreamDelegate(
     const std::shared_ptr<rclcpp::Node> & node, bool enable_latency_debug_log,
-    const std::string & latency_debug_log_path, const std::shared_ptr<ins_camera::Camera> & cam)
-  : node_(node), enable_latency_debug_log_(enable_latency_debug_log), cam_(cam)
+    const std::string & latency_debug_log_path, const std::shared_ptr<ins_camera::Camera> & cam,
+    const ComposeOptions & compose)
+  : node_(node), enable_latency_debug_log_(enable_latency_debug_log), cam_(cam), compose_(compose)
   {
     // Publisher for the compressed H.264 video stream
     compressed_pub_ =
@@ -92,6 +218,20 @@ public:
     // Publisher for IMU data (remains the same)
     imu_pub_ = node_->create_publisher<sensor_msgs::msg::Imu>("imu/data_raw", rclcpp::SensorDataQoS());
     RCLCPP_INFO(node_->get_logger(), "Publisher for compressed images and IMU created.");
+
+    if (compose_.enable) {
+      combiner_ = std::make_unique<stream_compose::DualStreamCombiner>(compose_.combiner);
+      if (combiner_->encoder_ok()) {
+        worker_ = std::thread([this] { WorkerLoop(); });
+        RCLCPP_INFO(
+          node_->get_logger(), "Side-by-side composition enabled (eye_size=%d swap_lenses=%d pair_tolerance=%ld).",
+          compose_.combiner.eye_size, compose_.combiner.swap_lenses,
+          static_cast<long>(compose_.combiner.pair_tolerance));
+      } else {
+        RCLCPP_ERROR(node_->get_logger(), "H.264 encoder (libx264) unavailable; publishing stream 0 as is.");
+        compose_.enable = false;
+      }
+    }
 
     if (enable_latency_debug_log_) {
       latency_log_.open(latency_debug_log_path, std::ios::out | std::ios::trunc);
@@ -107,6 +247,11 @@ public:
 
   virtual ~TestStreamDelegate()
   {
+    stop_worker_ = true;
+    queue_cv_.notify_all();
+    if (worker_.joinable()) {
+      worker_.join();
+    }
     if (latency_log_.is_open()) {
       latency_log_.close();
     }
@@ -118,36 +263,43 @@ public:
   {
     RecordStreamStats(size, timestamp, stream_index);
 
-    // We only care about the main video stream (index 0)
-    if (stream_index == 0 && size > 0 && compressed_pub_) {
-      auto msg = std::make_unique<sensor_msgs::msg::CompressedImage>();
+    if (!compose_.enable) {
+      PublishStream0(data, size, timestamp, stream_index);
+      return;
+    }
 
-      // Set the header
-      const rclcpp::Time now_stamp = node_->get_clock()->now();
-      msg->header.stamp = now_stamp;
-      msg->header.frame_id = "camera_frame";
-
-      // Set the format to H.264
-      // The subscriber will need to know this to select the correct decoder.
-      msg->format = "h264";
-
-      // Copy the compressed video data directly into the message
-      msg->data.assign(data, data + size);
-
-      compressed_pub_->publish(std::move(msg));
-
-      if (enable_latency_debug_log_ && latency_log_.is_open()) {
-        const int64_t seq = frame_seq_.fetch_add(1);
-        // NOTE: GetCameraMediaTime() を live stream 中（OnVideoData コールバック内）から
-        // 呼んではならない。実機検証 (LIDAR-079) で、1回でも呼ぶとカメラの内部コマンド
-        // チャンネルがブロックされ video stream が完全停止することが100%再現で確認された。
-        // media_time 列は既存 CSV パーサとの互換性のため残すが、値は常に -1.0 固定とする。
-        // 詳細: queue/projects/lidar-colorization/reports/lidar079_camera_latency_results.md
-        const double media_time = -1.0;
-        latency_log_ << seq << ',' << timestamp << ',' << std::fixed << std::setprecision(6)
-                     << last_exposure_timestamp_.load() << ',' << media_time << ',' << now_stamp.seconds() << '\n';
-        latency_log_.flush();
+    const auto steady_now = std::chrono::steady_clock::now();
+    if (!first_packet_seen_) {
+      first_packet_seen_ = true;
+      first_packet_time_ = steady_now;
+    }
+    Mode mode = mode_.load();
+    if (mode == Mode::kDetect) {
+      if (stream_index == 1) {
+        mode_ = mode = Mode::kDual;
+        RCLCPP_INFO(node_->get_logger(), "Two video streams detected; publishing side-by-side frames.");
+      } else if (std::chrono::duration<double>(steady_now - first_packet_time_).count() > compose_.detect_timeout_sec) {
+        mode_ = mode = Mode::kSingle;
+        RCLCPP_WARN(
+          node_->get_logger(),
+          "No stream_index 1 within %.1f s; falling back to publishing stream 0 only (single lens, as before).",
+          compose_.detect_timeout_sec);
       }
+    }
+
+    if (mode == Mode::kSingle) {
+      PublishStream0(data, size, timestamp, stream_index);
+    } else if (size > 0 && (stream_index == 0 || stream_index == 1)) {
+      // kDetect: stream 0 is already decoded so the composer is warm when stream 1 shows up.
+      EnqueueJob(data, size, timestamp, stream_index, node_->get_clock()->now());
+    }
+  }
+
+  void PublishStream0(const uint8_t * data, size_t size, int64_t timestamp, int stream_index)
+  {
+    // Plain passthrough of the main video stream (index 0)
+    if (stream_index == 0 && size > 0 && compressed_pub_) {
+      PublishPacket(data, size, timestamp, node_->get_clock()->now());
     }
   }
 
@@ -343,8 +495,21 @@ public:
     const std::string latency_debug_log_path =
       node_->declare_parameter<std::string>("latency_debug_log_path", "/tmp/insta360_latency_debug.csv");
 
+    // Dual-lens side-by-side composition (X3 preview >= 5.7K delivers one stream
+    // per lens). When only one stream arrives, stream 0 is published as is.
+    ComposeOptions compose;
+    compose.enable = node_->declare_parameter<bool>("compose_side_by_side", true);
+    compose.combiner.eye_size = node_->declare_parameter<int>("eye_size", 1920);
+    compose.combiner.swap_lenses = node_->declare_parameter<bool>("swap_lenses", false);
+    compose.combiner.pair_tolerance = node_->declare_parameter<int>("pair_tolerance", 20);
+    compose.detect_timeout_sec = node_->declare_parameter<double>("dual_stream_detect_timeout_sec", 3.0);
+    if (compose.combiner.eye_size < 2 || compose.combiner.eye_size % 2 != 0) {
+      RCLCPP_ERROR(node_->get_logger(), "eye_size must be even and >= 2; using 1920.");
+      compose.combiner.eye_size = 1920;
+    }
+
     std::shared_ptr<ins_camera::StreamDelegate> delegate =
-      std::make_shared<TestStreamDelegate>(node_, enable_latency_debug_log, latency_debug_log_path, cam);
+      std::make_shared<TestStreamDelegate>(node_, enable_latency_debug_log, latency_debug_log_path, cam, compose);
     cam->SetStreamDelegate(delegate);
 
     uint64_t utc_time = static_cast<uint64_t>(time(NULL));

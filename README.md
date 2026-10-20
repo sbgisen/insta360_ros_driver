@@ -113,6 +113,27 @@ Maximum number of `StartLiveStreaming` retry attempts before giving up and exiti
 mechanism watching it individually). Only set a finite value when explicitly testing an
 unsupported/untested `video_resolution` and you want the node to fail fast instead of retrying forever.
 
+#### Dual-lens streams (`/dual_fisheye/image/compressed`)
+
+On some X3 firmware (observed with V1.0.83) the preview delivers one H.264 stream per lens
+(`stream_index` 0 and 1, 2880x2880 each) instead of one 3840x1920 stream with both lenses. The node
+decodes both streams, scales each lens to `eye_size`, places them side by side (stream 0 on the left,
+stream 1 on the right) and publishes one H.264 `CompressedImage` (3840x1920 by default, the same layout
+as the older single-stream output). The `header.stamp` is the arrival time of the stream 0 packet.
+If no `stream_index` 1 packet arrives within `dual_stream_detect_timeout_sec` after the first packet,
+the node publishes stream 0 as is (one lens), as before, and never switches afterwards. Each second the
+node logs per-stream packet counts and sizes, and at startup the camera firmware version and serial number.
+
+Node parameters (set with `--ros-args -p`):
+- compose_side_by_side (default="true"): `false` disables composition and publishes stream 0 as is.
+- eye_size (default="1920"): width and height of each lens in the output. Must be even.
+- swap_lenses (default="false"): put stream 1 on the left.
+- pair_tolerance (default="20"): maximum SDK timestamp difference (ms-scale counter) for two frames to form a pair.
+- dual_stream_detect_timeout_sec (default="3.0"): how long to wait for stream 1 before falling back.
+
+Frames are dropped when their counterpart does not arrive within `pair_tolerance`. Decoding and encoding
+(libx264, ultrafast, no B-frames, IDR every 10 frames) run on a separate thread and are CPU heavy.
+
 The IMU allows for frame stabilization. For instance, you are able to visualize the orientation of the camera.
 
 ![IMU](https://github.com/user-attachments/assets/02b50cad-8415-4dde-9014-9ab3a4d415b9)

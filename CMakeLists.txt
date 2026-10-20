@@ -41,7 +41,7 @@ install(
   DESTINATION share/${PROJECT_NAME}
 )
 
-add_executable(${PROJECT_NAME} src/main.cpp)
+add_executable(${PROJECT_NAME} src/main.cpp src/stream_compose.cpp)
 ament_target_dependencies(${PROJECT_NAME}
   rclcpp
   camera_info_manager
@@ -72,6 +72,12 @@ ament_target_dependencies(camera_info_publisher
   std_msgs
 )
 target_link_libraries(camera_info_publisher ${YAMLCPP_LIBRARIES})
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_stream_compose test/test_stream_compose.cpp src/stream_compose.cpp)
+  target_link_libraries(test_stream_compose ${AVCODEC_LIBRARIES} ${AVUTIL_LIBRARIES} ${SWSCALE_LIBRARIES})
+endif()
 
 install(TARGETS 
   ${PROJECT_NAME}
