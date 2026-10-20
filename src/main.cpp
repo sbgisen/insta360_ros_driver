@@ -2,12 +2,14 @@
 #include <camera/device_discovery.h>
 #include <camera/photography_settings.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -32,6 +34,50 @@ private:
   std::atomic<int64_t> frame_seq_{0};
   std::atomic<double> last_exposure_timestamp_{-1.0};
   std::atomic<int64_t> exposure_event_count_{0};
+
+  // Per stream_index receive statistics, logged once per second. SDK 5.7K+
+  // previews deliver two video streams (stream_index 0 and 1); this makes it
+  // visible how many packets/bytes each one carries.
+  struct StreamStats
+  {
+    int64_t count = 0;
+    size_t bytes = 0;
+    size_t min_size = 0;
+    size_t max_size = 0;
+    int64_t last_timestamp = 0;
+  };
+  static constexpr int kMaxLoggedStreams = 4;
+  std::mutex stats_mutex_;
+  StreamStats stats_[kMaxLoggedStreams];
+  std::chrono::steady_clock::time_point last_stats_log_ = std::chrono::steady_clock::now();
+
+  void RecordStreamStats(size_t size, int64_t timestamp, int stream_index)
+  {
+    if (stream_index < 0 || stream_index >= kMaxLoggedStreams) {
+      return;
+    }
+    std::lock_guard<std::mutex> lock(stats_mutex_);
+    StreamStats & s = stats_[stream_index];
+    s.min_size = s.count == 0 ? size : std::min(s.min_size, size);
+    s.max_size = std::max(s.max_size, size);
+    s.bytes += size;
+    s.last_timestamp = timestamp;
+    ++s.count;
+
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last_stats_log_ < std::chrono::seconds(1)) {
+      return;
+    }
+    last_stats_log_ = now;
+    for (int i = 0; i < kMaxLoggedStreams; ++i) {
+      if (stats_[i].count > 0) {
+        RCLCPP_INFO(
+          node_->get_logger(), "stream_index=%d count=%ld bytes=%zu size_min=%zu size_max=%zu last_timestamp=%ld", i,
+          static_cast<long>(stats_[i].count), stats_[i].bytes, stats_[i].min_size, stats_[i].max_size,
+          static_cast<long>(stats_[i].last_timestamp));
+      }
+    }
+  }
 
 public:
   TestStreamDelegate(
@@ -70,6 +116,8 @@ public:
 
   void OnVideoData(const uint8_t * data, size_t size, int64_t timestamp, uint8_t streamType, int stream_index) override
   {
+    RecordStreamStats(size, timestamp, stream_index);
+
     // We only care about the main video stream (index 0)
     if (stream_index == 0 && size > 0 && compressed_pub_) {
       auto msg = std::make_unique<sensor_msgs::msg::CompressedImage>();
@@ -284,6 +332,9 @@ public:
       return -1;
     }
     RCLCPP_INFO(node_->get_logger(), "Camera opened successfully.");
+    RCLCPP_INFO(
+      node_->get_logger(), "Camera fw_version=%s serial_number=%s", list[0].fw_version.c_str(),
+      list[0].serial_number.c_str());
     discovery.FreeDeviceDescriptors(list);
 
     // LIDAR-075: opt-in camera latency measurement instrumentation.
